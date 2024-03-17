@@ -13,9 +13,12 @@ import gym
 from gym import spaces
 from gym.utils import seeding
 import numpy as np
+import random
+from Agent import Agent
+import time
+import pyglet
 
-
-class Grid(object): # 代表单个格子
+class Grid(object):  # 代表单个格子
     def __init__(self, x: int = None,
                  y: int = None,
                  type: int = 0,
@@ -23,7 +26,7 @@ class Grid(object): # 代表单个格子
                  value: float = 0.0):  # value, for possible future usage
         self.x = x  # coordinate x
         self.y = y
-        self.type = value  # Type (0:empty；1:obstacle or boundary)
+        self.type = type  # Type (0:empty；1:obstacle or boundary)
         self.reward = reward  # instant reward for an agent entering this grid cell
         self.value = value  # the value of this grid cell, 标识是否被探索过
         self.name = None  # name of this grid.
@@ -81,6 +84,9 @@ class GridMatrix(object):
             xx, yy = x, y
         elif isinstance(x, tuple):
             xx, yy = x[0], x[1]
+
+        if not (xx >= 0 and yy >= 0 and xx < self.n_width and yy < self.n_height):
+            print("xx:{0}, yy:{1}".format(xx, yy)+"异常!!!!!!!!!!!!!!!!!!!!!")
         assert (xx >= 0 and yy >= 0 and xx < self.n_width and yy < self.n_height), \
             "coordinates should be in reasonable range"
         index = yy * self.n_width + xx
@@ -97,6 +103,8 @@ class GridMatrix(object):
         grid = self.get_grid(x, y)
         if grid is not None:
             grid.value = value
+            # 打印格子的坐标和修改成的值
+            print("设置x:"+str(x)+", y:"+str(y)+"格子为"+str(value))
         else:
             raise ("grid doesn't exist")
 
@@ -124,6 +132,14 @@ class GridMatrix(object):
         if grid is None:
             return None
         return grid.type
+
+    def is_existed(self, x, y):
+        print("查询x:" + str(x) + " ,y:" + str(y) + "是否存在")
+        if 0 <= x < self.n_width and 0 <= y < self.n_height:
+            print("x:"+str(x)+" y:"+str(y)+"存在")
+            return True
+        else:
+            return False
 
 
 class GridWorldEnv(gym.Env):
@@ -173,7 +189,7 @@ class GridWorldEnv(gym.Env):
         self.refresh_setting()
         self.viewer = None  # 图形接口对象
         self._seed()  # 产生一个随机子
-        self.reset()
+        # self.reset()
 
     def _adjust_size(self):
         '''调整场景尺寸适合最大宽度、高度不超过800
@@ -186,6 +202,7 @@ class GridWorldEnv(gym.Env):
         return [seed]
 
     def step(self, action):
+        time.sleep(1)
         assert self.action_space.contains(action), \
             "%r (%s) invalid" % (action, type(action))
 
@@ -228,8 +245,8 @@ class GridWorldEnv(gym.Env):
         # wall effect, obstacles or boundary.
         # 类型为1的格子为障碍格子，不可进入
         if self.grids.get_type(new_x, new_y) == 1:
-            new_x, new_y = old_x, old_y
-
+            # new_x, new_y = old_x, old_y
+            done = 1
         self.reward = self.grids.get_reward(new_x, new_y)
 
         done = self._is_end_state(new_x, new_y)
@@ -485,20 +502,195 @@ def SkullAndTreasure():
     env.refresh_setting()
     return env
 
-def MultiagentGridWorld():
-    '''多智能体格子世界环境
-    '''
-    env = GridWorldEnv(n_width=10,
-                       n_height=7,
-                       u_size=60,
-                       default_reward=-1,
-                       default_type=0,
-                       windy=False)
-    env.start = (0, 3)
-    env.ends = [(7, 3)]
-    env.rewards = [(7, 3, 1)]
-    env.refresh_setting()
-    return env
+
+class MAGridWorldEnv(GridWorldEnv):
+    metadata = {
+        'render.modes': ['human', 'rgb_array'],
+        'video.frames_per_second': 30
+    }
+
+    def __init__(self, n_width: int = 10,
+                 n_height: int = 7,
+                 u_size=40,
+                 default_reward: float = 0,
+                 default_type=0,
+                 n_agents=2):
+
+        self.u_size = u_size  # size for each cell (pixels)
+        self.n_width = n_width  # width of the env calculated by number of cells.
+        self.n_height = n_height  # height...
+        self.width = u_size * n_width  # scenario width (pixels)
+        self.height = u_size * n_height  # height
+        self.default_reward = default_reward
+        self.default_type = default_type
+
+        self.grids = GridMatrix(n_width=self.n_width,
+                                n_height=self.n_height,
+                                default_reward=self.default_reward,
+                                default_type=self.default_type,
+                                default_value=0.5)
+
+        self.n_agents = n_agents  # 智能体数量
+        self.start = [[0, 0] for i in range(n_agents)]
+        self.agents = [Agent(self.start, agent_id) for agent_id in range(n_agents)]  # 创建多个智能体实例
+        for agent in self.agents:
+            agent.observation_space = spaces.Discrete(self.n_width * self.n_height)  # 设置观察空间
+        self.state = [0] * n_agents  # 用于存储每个智能体的状态
+
+        self.obs = [[0] * (self.n_width * self.n_height) for i in range(n_agents)] * n_agents  # 用于存储每个智能体的观察
+        # self.start = [0, 0]*n_agents
+        # print(self.state)
+        self.action = []
+        self.reward = []
+        self.set_start()
+        self.viewer = None  # 图形接口对象
+        self.agent_geoms = []  # Initialize the list for agent rendering objects
+        self._seed()  # 产生一个随机子
+        for i in range(n_agents):
+            self.action.append(0)
+            self.reward.append(0)
+        self.reset()
+
+    def set_start(self):
+        # 清空start列表
+        for i, agent in enumerate(self.agents):
+            # 随机设置每个智能体的起始位置
+            # self.start.append((random.randint(0, self.n_width - 1), random.randint(0, self.n_height - 1)))
+            self.start[i] = (random.randint(0, self.n_width - 1), random.randint(0, self.n_height - 1))
+
+    def reset(self):
+        for i, agent in enumerate(self.agents):
+            agent.position = self.start[i]  # 重置所有智能体的位置
+            self.state[i] = self._xy_to_state(
+                self.start[i][0],
+                self.start[i][1])  # 设置当前智能体的状态
+        return self.obs
+        # 可以添加更多的重置逻辑
+
+    def step(self, actions):
+        rewards = [0] * self.n_agents
+        dones = [0] * self.n_agents
+        pos = [0, 0] * self.n_agents
+        for i, action in enumerate(actions):
+            # time.sleep(0.5)
+            done = 0
+            reward = 0
+            self.action[i] = actions[i]  # action for rendering
+            old_x, old_y = self._state_to_xy(self.state[i])
+            new_x, new_y = old_x, old_y
+
+            if action == 0:
+                new_x -= 1  # left
+            elif action == 1:
+                new_x += 1  # right
+            elif action == 2:
+                new_y += 1  # up
+            elif action == 3:
+                new_y -= 1  # down
+
+            elif action == 4:
+                new_x, new_y = new_x - 1, new_y - 1
+            elif action == 5:
+                new_x, new_y = new_x + 1, new_y - 1
+            elif action == 6:
+                new_x, new_y = new_x + 1, new_y - 1
+            elif action == 7:
+                new_x, new_y = new_x + 1, new_y + 1
+            # boundary effect
+            if new_x < 0: new_x = 0
+            if new_x >= self.n_width: new_x = self.n_width - 1
+            if new_y < 0: new_y = 0
+            if new_y >= self.n_height: new_y = self.n_height - 1
+
+            pos[i] = (new_x, new_y)
+            # wall effect, obstacles or boundary.
+            # 类型为1的格子为障碍格子，不可进入
+            if self.grids.get_type(new_x, new_y) == 1:
+                # new_x, new_y = old_x, old_y
+                done = 1
+
+            obs = []
+            # 处理智能体周围一圈格子
+            for x in range(-1, 2):
+                for y in range(-1, 2):
+                    if self.grids.is_existed(new_x + x, new_y + y):
+                        # and self.grids.get_type(new_x + x, new_y + y) == 0):
+                        self.grids.set_value(new_x + x, new_y + y,
+                                             1)  # 设置为已访问
+                        self.reward[i] += self.grids.get_reward(new_x + x, new_y + y)  # 获取奖励
+            for x in range(self.n_width):
+                for y in range(self.n_height):
+                    obs.append(self.grids.get_value(x, y))  # 获取观察
+
+            self.state[i] = self._xy_to_state(new_x, new_y)
+            self.agents[i].position = (new_x, new_y)
+            self.obs[i] = obs
+            dones[i] = done
+
+        print("all stepped!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        # 根据你的需要添加更多逻辑，如处理智能体之间的交互
+        return self.obs, rewards, dones, pos
+
+    def render(self, mode='human'):
+        from gym.envs.classic_control import rendering
+        if self.viewer is None:
+            self.viewer = rendering.Viewer(self.width, self.height)
+
+            # 初始化格子
+            self.grid_geoms = []
+            for x in range(self.n_width):
+                for y in range(self.n_height):
+                    rect = rendering.FilledPolygon([(x * self.u_size, y * self.u_size),
+                                                    ((x + 1) * self.u_size, y * self.u_size),
+                                                    ((x + 1) * self.u_size, (y + 1) * self.u_size),
+                                                    (x * self.u_size, (y + 1) * self.u_size)])
+                    self.viewer.add_geom(rect)
+                    self.grid_geoms.append(rect)
+
+            # 绘制格子间的分隔线
+            for x in range(self.n_width + 1):
+                line = rendering.Line((x * self.u_size, 0), (x * self.u_size, self.n_height * self.u_size))
+                self.viewer.add_geom(line)
+            for y in range(self.n_height + 1):
+                line = rendering.Line((0, y * self.u_size), (self.n_width * self.u_size, y * self.u_size))
+                self.viewer.add_geom(line)
+
+            # 初始化智能体渲染对象
+            self.agent_geoms = []
+            for i in range(self.n_agents):
+                agent_circle = rendering.make_circle(self.u_size / 4, 30, True)
+                agent_color = i / self.n_agents
+                agent_circle.set_color(agent_color, 0, 1 - agent_color)
+                agent_trans = rendering.Transform()
+                agent_circle.add_attr(agent_trans)
+                self.viewer.add_geom(agent_circle)
+                self.agent_geoms.append(agent_trans)
+
+        # 动态更新格子颜色
+        for i, (x, y) in enumerate([(x, y) for x in range(self.n_width) for y in range(self.n_height)]):
+            rect = self.grid_geoms[i]
+            grid = self.grids.get_grid(x, y)
+            if grid.type == 0 and grid.value == 1:
+                rect.set_color(0.5, 0.5, 0.5)  # 灰色
+            elif grid.type == 0:
+                rect.set_color(1, 1, 1)  # 白色
+            else:
+                rect.set_color(0, 0, 0)  # 黑色
+
+        # 更新智能体位置
+        for i, agent in enumerate(self.agents):
+            x, y = agent.position
+            self.agent_geoms[i].set_translation((x + 0.5) * self.u_size, (y + 0.5) * self.u_size)
+
+        return self.viewer.render(return_rgb_array=mode == 'rgb_array')
+
+    def close(self):
+        if self.viewer:
+            self.viewer.close()
+            self.viewer = None
+
+    def __del__(self):
+        self.close()
 
 if __name__ == "__main__":
     env = GridWorldEnv()

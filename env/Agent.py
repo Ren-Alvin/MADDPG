@@ -9,3 +9,5 @@ class Agent:
         # 观察空间由low和high决定
         self.observation_space = None
         # 可以添加更多智能体的属性，如健康值、分数等
+
+
