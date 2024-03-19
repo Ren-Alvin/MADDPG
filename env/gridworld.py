@@ -18,6 +18,7 @@ from Agent import Agent
 import time
 import pyglet
 
+
 class Grid(object):  # 代表单个格子
     def __init__(self, x: int = None,
                  y: int = None,
@@ -86,7 +87,7 @@ class GridMatrix(object):
             xx, yy = x[0], x[1]
 
         if not (xx >= 0 and yy >= 0 and xx < self.n_width and yy < self.n_height):
-            print("xx:{0}, yy:{1}".format(xx, yy)+"异常!!!!!!!!!!!!!!!!!!!!!")
+            print("xx:{0}, yy:{1}".format(xx, yy) + "异常!!!!!!!!!!!!!!!!!!!!!")
         assert (xx >= 0 and yy >= 0 and xx < self.n_width and yy < self.n_height), \
             "coordinates should be in reasonable range"
         index = yy * self.n_width + xx
@@ -104,7 +105,7 @@ class GridMatrix(object):
         if grid is not None:
             grid.value = value
             # 打印格子的坐标和修改成的值
-            print("设置x:"+str(x)+", y:"+str(y)+"格子为"+str(value))
+            # print("设置x:" + str(x) + ", y:" + str(y) + "格子为" + str(value))
         else:
             raise ("grid doesn't exist")
 
@@ -134,9 +135,9 @@ class GridMatrix(object):
         return grid.type
 
     def is_existed(self, x, y):
-        print("查询x:" + str(x) + " ,y:" + str(y) + "是否存在")
+        # print("查询x:" + str(x) + " ,y:" + str(y) + "是否存在")
         if 0 <= x < self.n_width and 0 <= y < self.n_height:
-            print("x:"+str(x)+" y:"+str(y)+"存在")
+            # print("x:"+str(x)+" y:"+str(y)+"存在")
             return True
         else:
             return False
@@ -202,7 +203,7 @@ class GridWorldEnv(gym.Env):
         return [seed]
 
     def step(self, action):
-        time.sleep(1)
+        # time.sleep(5)
         assert self.action_space.contains(action), \
             "%r (%s) invalid" % (action, type(action))
 
@@ -503,7 +504,7 @@ def SkullAndTreasure():
     return env
 
 
-class MAGridWorldEnv(GridWorldEnv):
+class MAGridWorldEnv():
     metadata = {
         'render.modes': ['human', 'rgb_array'],
         'video.frames_per_second': 30
@@ -514,7 +515,8 @@ class MAGridWorldEnv(GridWorldEnv):
                  u_size=40,
                  default_reward: float = 0,
                  default_type=0,
-                 n_agents=2):
+                 n_agents=2,
+                 n_targets=3):
 
         self.u_size = u_size  # size for each cell (pixels)
         self.n_width = n_width  # width of the env calculated by number of cells.
@@ -528,10 +530,12 @@ class MAGridWorldEnv(GridWorldEnv):
                                 n_height=self.n_height,
                                 default_reward=self.default_reward,
                                 default_type=self.default_type,
-                                default_value=0.5)
+                                default_value=self.default_type)
 
         self.n_agents = n_agents  # 智能体数量
+        self.n_targets = n_targets  # 目标数量
         self.start = [[0, 0] for i in range(n_agents)]
+        self.targets = [[3, 2] , [5, 1],[7,4]]  # 目标位置
         self.agents = [Agent(self.start, agent_id) for agent_id in range(n_agents)]  # 创建多个智能体实例
         for agent in self.agents:
             agent.observation_space = spaces.Discrete(self.n_width * self.n_height)  # 设置观察空间
@@ -542,7 +546,11 @@ class MAGridWorldEnv(GridWorldEnv):
         # print(self.state)
         self.action = []
         self.reward = []
+
+        # self.directions = [[0, 1]]*n_agents
+        # 方向向量，用于计算智能体的移动。默认朝上
         self.set_start()
+        # self.set_
         self.viewer = None  # 图形接口对象
         self.agent_geoms = []  # Initialize the list for agent rendering objects
         self._seed()  # 产生一个随机子
@@ -551,19 +559,38 @@ class MAGridWorldEnv(GridWorldEnv):
             self.reward.append(0)
         self.reset()
 
+    def _seed(self, seed=None):
+        # 产生一个随机化时需要的种子，同时返回一个np_random对象，支持后续的随机化生成操作
+        self.np_random, seed = seeding.np_random(seed)
+        return [seed]
+
     def set_start(self):
         # 清空start列表
         for i, agent in enumerate(self.agents):
             # 随机设置每个智能体的起始位置
             # self.start.append((random.randint(0, self.n_width - 1), random.randint(0, self.n_height - 1)))
             self.start[i] = (random.randint(0, self.n_width - 1), random.randint(0, self.n_height - 1))
+    def set_target(self,target_list):
+        for i in range(self.n_targets):
+            self.grids.set_type(target_list[i][0], target_list[i][1], 2)
+            self.grids.set_reward(target_list[i][0], target_list[i][1], 10)
+
+
 
     def reset(self):
+        next_state = []
         for i, agent in enumerate(self.agents):
             agent.position = self.start[i]  # 重置所有智能体的位置
             self.state[i] = self._xy_to_state(
                 self.start[i][0],
                 self.start[i][1])  # 设置当前智能体的状态
+            # agent.direct = [0, 1]  # 设置朝向
+            # next_state[i].append(self.obs[i])
+            # next_state[i].append(self.state[i])
+            # next_state[i].append(agent.direct)
+            # _state=[]
+            # for j , agent in enumerate(self.agents):
+            #     if(i!=j)_state.append(next_state[i])
         return self.obs
         # 可以添加更多的重置逻辑
 
@@ -571,6 +598,38 @@ class MAGridWorldEnv(GridWorldEnv):
         rewards = [0] * self.n_agents
         dones = [0] * self.n_agents
         pos = [0, 0] * self.n_agents
+
+        # 定义动作
+        FORWARD = 0
+        LEFT_FORWARD = 1
+        RIGHT_FORWARD = 2
+
+        # 定义朝向变化
+        direction_changes = {
+            LEFT_FORWARD: [-1, 1],  # 向左转90度
+            RIGHT_FORWARD: [1, -1]  # 向右转90度
+        }
+
+        def go_left(direction):
+            if direction == [0, 1]:
+                return [-1, 1]
+            elif direction == [-1, 0]:
+                return [-1, -1]
+            elif direction == [0, -1]:
+                return [1, -1]
+            elif direction == [1, 0]:
+                return [1, 1]
+
+        def go_right(direction):
+            if direction == [0, 1]:
+                return [1, 1]
+            elif direction == [1, 0]:
+                return [1, -1]
+            elif direction == [0, -1]:
+                return [-1, -1]
+            elif direction == [-1, 0]:
+                return [-1, 1]
+
         for i, action in enumerate(actions):
             # time.sleep(0.5)
             done = 0
@@ -579,33 +638,48 @@ class MAGridWorldEnv(GridWorldEnv):
             old_x, old_y = self._state_to_xy(self.state[i])
             new_x, new_y = old_x, old_y
 
-            if action == 0:
-                new_x -= 1  # left
-            elif action == 1:
-                new_x += 1  # right
-            elif action == 2:
-                new_y += 1  # up
-            elif action == 3:
-                new_y -= 1  # down
+            # if action == FORWARD:
+            #     # 沿当前朝向前进一格
+            #     new_x, new_y = new_x + self.agents[i].direct[0], new_y + self.agents[i].direct[1]
+            #
+            # elif action in direction_changes:
+            #     # 计算新位置
+            #     trans = self.agents[i].direct
+            #     if action == LEFT_FORWARD:
+            #         print("Agent " + str(i) + " is turning left")
+            #         trans = go_left(trans)
+            #     elif action == RIGHT_FORWARD:
+            #         print("Agent " + str(i) + " is turning right")
+            #         trans = go_right(trans)
+            #     new_x, new_y = new_x + trans[0], new_y + trans[1]
+            #     # 计算新朝向
+            #     change = direction_changes[action]
+            #     self.agents[i].direct = [self.agents[i].direct[1] * change[0], self.agents[i].direct[0] * change[1]]
 
-            elif action == 4:
-                new_x, new_y = new_x - 1, new_y - 1
-            elif action == 5:
-                new_x, new_y = new_x + 1, new_y - 1
-            elif action == 6:
-                new_x, new_y = new_x + 1, new_y - 1
-            elif action == 7:
-                new_x, new_y = new_x + 1, new_y + 1
+            if action in direction_changes:
+                if action == LEFT_FORWARD:print("Agent " + str(i) + " is turning left")
+                elif action == RIGHT_FORWARD:print("Agent " + str(i) + " is turning right")
+                # 计算新朝向
+                change = direction_changes[action]
+                self.agents[i].direct = [self.agents[i].direct[1] * change[0], self.agents[i].direct[0] * change[1]]
+
+            # 沿当前朝向前进一格
+            new_x, new_y = new_x + self.agents[i].direct[0], new_y + self.agents[i].direct[1]
+
             # boundary effect
             if new_x < 0: new_x = 0
             if new_x >= self.n_width: new_x = self.n_width - 1
             if new_y < 0: new_y = 0
             if new_y >= self.n_height: new_y = self.n_height - 1
+            # if new_x < 0: done = 1
+            # if new_x >= self.n_width: done = 1
+            # if new_y < 0: done = 1
+            # if new_y >= self.n_height: done = 1
 
             pos[i] = (new_x, new_y)
             # wall effect, obstacles or boundary.
             # 类型为1的格子为障碍格子，不可进入
-            if self.grids.get_type(new_x, new_y) == 1:
+            if self.grids.is_existed(new_x,new_y) or self.grids.get_type(new_x, new_y) == 1:
                 # new_x, new_y = old_x, old_y
                 done = 1
 
@@ -618,6 +692,7 @@ class MAGridWorldEnv(GridWorldEnv):
                         self.grids.set_value(new_x + x, new_y + y,
                                              1)  # 设置为已访问
                         self.reward[i] += self.grids.get_reward(new_x + x, new_y + y)  # 获取奖励
+                        self.grids.set_reward(new_x + x, new_y + y, 0)  # 获取奖励后将奖励置0
             for x in range(self.n_width):
                 for y in range(self.n_height):
                     obs.append(self.grids.get_value(x, y))  # 获取观察
@@ -629,7 +704,9 @@ class MAGridWorldEnv(GridWorldEnv):
 
         print("all stepped!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         # 根据你的需要添加更多逻辑，如处理智能体之间的交互
-        return self.obs, rewards, dones, pos
+        return self.obs, self.reward, dones, pos
+
+    from gym.envs.classic_control import rendering
 
     def render(self, mode='human'):
         from gym.envs.classic_control import rendering
@@ -657,7 +734,7 @@ class MAGridWorldEnv(GridWorldEnv):
 
             # 初始化智能体渲染对象
             self.agent_geoms = []
-            for i in range(self.n_agents):
+            for i ,agent in range(self.n_agents):
                 agent_circle = rendering.make_circle(self.u_size / 4, 30, True)
                 agent_color = i / self.n_agents
                 agent_circle.set_color(agent_color, 0, 1 - agent_color)
@@ -684,6 +761,19 @@ class MAGridWorldEnv(GridWorldEnv):
 
         return self.viewer.render(return_rgb_array=mode == 'rgb_array')
 
+    def _state_to_xy(self, s):
+        x = s % self.n_width
+        y = int((s - x) / self.n_width)
+        return x, y
+
+    def _xy_to_state(self, x, y=None):
+        if isinstance(x, int):
+            assert (isinstance(y, int)), "incomplete Position info"
+            return x + self.n_width * y
+        elif isinstance(x, tuple):
+            return x[0] + self.n_width * x[1]
+        return -1  # 未知状态, unknow status
+
     def close(self):
         if self.viewer:
             self.viewer.close()
@@ -691,6 +781,7 @@ class MAGridWorldEnv(GridWorldEnv):
 
     def __del__(self):
         self.close()
+
 
 if __name__ == "__main__":
     env = GridWorldEnv()
